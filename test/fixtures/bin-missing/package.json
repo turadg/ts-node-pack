@@ -1,0 +1,10 @@
+{
+  "name": "bin-missing-fixture",
+  "version": "1.0.0",
+  "bin": "./src/cli/not-there.js",
+  "files": [
+    "src"
+  ],
+  "type": "module",
+  "main": "./src/index.ts"
+}

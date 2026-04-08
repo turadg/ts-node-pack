@@ -1,0 +1,45 @@
+{
+  "name": "ts-node-pack",
+  "version": "0.1.0",
+  "description": "Pack a TypeScript package into a Node-compatible npm tarball without modifying the source tree",
+  "keywords": [
+    "cli",
+    "esm",
+    "npm",
+    "pack",
+    "typescript"
+  ],
+  "license": "MIT",
+  "author": "Turadg Aleahmad <turadg@aleahmad.net>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/turadg/ts-node-pack.git"
+  },
+  "bin": {
+    "ts-node-pack": "./src/cli.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vp test",
+    "pack:self": "node ./src/cli.ts ."
+  },
+  "dependencies": {
+    "npm-packlist": "^10.0.4",
+    "ts-blank-space": "^0.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.39",
+    "typescript": "^6.0.2"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.33.0"
+}

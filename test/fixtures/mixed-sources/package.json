@@ -1,0 +1,9 @@
+{
+  "name": "mixed-sources-fixture",
+  "version": "1.0.0",
+  "files": [
+    "src"
+  ],
+  "type": "module",
+  "main": "./src/index.ts"
+}

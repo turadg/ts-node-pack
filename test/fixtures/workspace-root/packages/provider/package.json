@@ -1,0 +1,9 @@
+{
+  "name": "@regress/provider",
+  "version": "3.4.5",
+  "files": [
+    "src"
+  ],
+  "type": "module",
+  "main": "./src/index.ts"
+}
