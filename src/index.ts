@@ -236,14 +236,33 @@ function findLocalBin(startDir, name) {
   }
 }
 
-async function runTsc(emitConfigPath, cwd, log) {
+async function findLocalTsc(cwd) {
   // Prefer a local tsc so users control the compiler version (and to avoid
   // npx resolving to macOS's /usr/bin/tsc — the TeX/Smalltalk compiler —
   // when no local install exists). In a monorepo, the package's own
   // node_modules/.bin may be empty while the workspace root has the
   // binary, so walk upward the same way npm's `$PATH` composition does.
   const binName = process.platform === "win32" ? "tsc.cmd" : "tsc";
-  const localTsc = findLocalBin(cwd, binName);
+  const fromBin = findLocalBin(cwd, binName);
+  if (fromBin !== null) return fromBin;
+  // Yarn 4's pnpm/PnP linkers do not populate node_modules/.bin/. Fall back
+  // to `yarn bin tsc`, which resolves through the active linker and prints
+  // the absolute path of the tsc binary when the workspace depends on it.
+  try {
+    const { stdout } = await execFileAsync("yarn", ["bin", "tsc"], {
+      cwd,
+      maxBuffer: 1024 * 1024,
+    });
+    const candidate = stdout.trim().split("\n").pop();
+    if (candidate && existsSync(candidate)) return candidate;
+  } catch {
+    // `yarn` not on PATH or not a yarn project — fall through to npx.
+  }
+  return null;
+}
+
+async function runTsc(emitConfigPath, cwd, log) {
+  const localTsc = await findLocalTsc(cwd);
   const useLocal = localTsc !== null;
   const [cmd, argv] = useLocal
     ? [localTsc, ["-p", emitConfigPath]]
