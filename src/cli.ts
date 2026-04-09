@@ -8,8 +8,9 @@ const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     tsconfig: { type: "string" },
-    "emit-only": { type: "boolean", default: false },
-    "keep-temp": { type: "boolean", default: false },
+    "skip-pack": { type: "boolean", default: false },
+    "stage-to": { type: "string" },
+    force: { type: "boolean", default: false },
     verbose: { type: "boolean", short: "v", default: false },
     help: { type: "boolean", short: "h", default: false },
   },
@@ -20,10 +21,12 @@ if (values.help || positionals.length === 0) {
 
 Options:
   --tsconfig <path>   Path to tsconfig (default: tsconfig.build.json or tsconfig.json)
-  --emit-only         Emit compiled files without packing
-  --keep-temp         Keep temporary staging directory
-  -v, --verbose       Verbose output
-  -h, --help          Show this help message
+  --stage-to <dir>    Stage into <dir> instead of an auto-created temp dir.
+                      Caller owns cleanup. Errors if <dir> is non-empty unless --force.
+  --skip-pack         Skip the final \`npm pack\` step. Requires --stage-to.
+  --force             With --stage-to, clear <dir> if it already has contents.
+  -v, --verbose       Log each pipeline phase to stderr.
+  -h, --help          Show this help message.
 `);
   process.exit(values.help ? 0 : 1);
 }
@@ -33,8 +36,9 @@ const packageDir = resolve(positionals[0]);
 try {
   const result = await tsNodePack(packageDir, {
     tsconfig: values.tsconfig,
-    emitOnly: values["emit-only"],
-    keepTemp: values["keep-temp"],
+    skipPack: values["skip-pack"],
+    stageTo: values["stage-to"],
+    force: values.force,
     verbose: values.verbose,
   });
   console.log(result);

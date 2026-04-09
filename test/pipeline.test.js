@@ -4,16 +4,17 @@
  * real-world validation against agoric-sdk, codified here so that a
  * future change to the pipeline can't silently break any of them.
  *
- * Uses `emitOnly: true` so there is no `npm pack` step and no
- * node_modules churn — the tests only assert on the contents of the
- * staging directory, which is kept around via `keepTemp: true` and
- * cleaned up in `afterAll`.
+ * Uses `skipPack: true` + `stageTo: <mkdtemp>` so there is no
+ * `npm pack` step and no node_modules churn — the tests only assert on
+ * the contents of the per-fixture staging directory, which is cleaned
+ * up in `afterAll`.
  */
 
 import { describe, it, beforeAll, afterAll } from "vitest";
 import assert from "node:assert/strict";
-import { readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tsNodePack } from "../src/index.ts";
@@ -21,16 +22,21 @@ import { tsNodePack } from "../src/index.ts";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixtures = join(__dirname, "fixtures");
 
-/** Tracks every temp dir created so we can clean up in afterAll. */
+/** Tracks every staging dir created so we can clean up in afterAll. */
 const tempDirs = [];
 
 async function packFixture(fixtureName) {
+  // Use stageTo with a per-test mkdtemp so each fixture gets its own
+  // staging dir that we can inspect (the new API requires stageTo
+  // whenever skipPack is set — there is no more "give me a temp dir
+  // back" mode).
+  const stageTo = await mkdtemp(join(tmpdir(), "ts-node-pack-test-"));
   const stagingDir = await tsNodePack(join(fixtures, fixtureName), {
-    emitOnly: true,
-    keepTemp: true,
+    skipPack: true,
+    stageTo,
+    force: true,
   });
-  // stagingDir is `<tmp>/package`; keep the parent for cleanup.
-  tempDirs.push(dirname(stagingDir));
+  tempDirs.push(stagingDir);
   return stagingDir;
 }
 
@@ -190,14 +196,16 @@ describe("pipeline: JSDoc specifier false-positives", () => {
   // like `import './foo.ts'` as documentation. The validator naively
   // regex-scanned files for leftover .ts specifiers and flagged those
   // doc examples, blocking the pack. The fix is to strip comments
-  // before scanning. We cover that here by self-packing via emitOnly.
+  // before scanning. We cover that here by self-packing via skipPack.
   it("self-pack of ts-node-pack succeeds despite JSDoc examples", async () => {
     const repoRoot = join(__dirname, "..");
+    const stageTo = await mkdtemp(join(tmpdir(), "ts-node-pack-test-"));
     const staging = await tsNodePack(repoRoot, {
-      emitOnly: true,
-      keepTemp: true,
+      skipPack: true,
+      stageTo,
+      force: true,
     });
-    tempDirs.push(dirname(staging));
+    tempDirs.push(staging);
     // If the validator incorrectly flagged the JSDoc examples, the
     // pipeline would have thrown before returning. Reaching here =
     // validator handled the comment-stripping correctly.

@@ -21,21 +21,39 @@ const execFileAsync = promisify(execFile);
 
 export interface TsNodePackOptions {
   tsconfig?: string;
-  emitOnly?: boolean;
-  keepTemp?: boolean;
+  /**
+   * Skip the final `npm pack` step. Requires `stageTo` (otherwise there
+   * is no way for the caller to access the staged contents).
+   */
+  skipPack?: boolean;
+  /**
+   * Stage directly into this directory instead of an auto-created temp
+   * dir. Caller owns cleanup. Errors if the directory already has
+   * contents, unless `force` is set.
+   */
+  stageTo?: string;
+  /** With `stageTo`, clear the target directory if it already has contents. */
+  force?: boolean;
   verbose?: boolean;
 }
 
 /**
  * Main pipeline: pack a TypeScript package into a Node-compatible tarball.
- * Returns the path to the .tgz file (or the staging dir if --emit-only).
+ * Returns the path to the .tgz file, or the staging directory when
+ * `skipPack` is set.
  */
 export async function tsNodePack(
   packageDir: string,
   options: TsNodePackOptions = {},
 ): Promise<string> {
-  const { tsconfig, emitOnly, keepTemp, verbose } = options;
+  const { tsconfig, skipPack, stageTo, force, verbose } = options;
   const log = verbose ? (...args: unknown[]) => console.error("[ts-node-pack]", ...args) : () => {};
+
+  if (skipPack && !stageTo) {
+    throw new Error(
+      "skipPack requires stageTo: caller must specify where to put the staged contents",
+    );
+  }
 
   packageDir = resolve(packageDir);
 
@@ -48,11 +66,34 @@ export async function tsNodePack(
   const tsconfigPath = resolveTsconfig(packageDir, tsconfig);
   if (tsconfigPath) log(`Found tsconfig: ${tsconfigPath}`);
 
-  // ── Phase 2: Create staging directory ─────────────────────────────────
-  log("Phase 2: Creating staging directory...");
-  const tmpDir = await mkdtemp(join(tmpdir(), "ts-node-pack-"));
-  const stagingDir = join(tmpDir, "package");
-  await mkdir(stagingDir, { recursive: true });
+  // ── Phase 2: Create work and staging directories ─────────────────────
+  // We always need a private work dir for auxiliary files (e.g.
+  // tsconfig.emit.json) that MUST NOT land inside the packed contents.
+  // In default mode the staging dir is nested inside the work dir, so
+  // cleaning up the work dir cleans up everything. In stageTo mode the
+  // staging dir is the caller's directory — we still create a small
+  // separate work dir for auxiliary files and rm only that in Phase 10.
+  log("Phase 2: Creating work and staging directories...");
+  const workDir = await mkdtemp(join(tmpdir(), "ts-node-pack-"));
+  let stagingDir: string;
+  if (stageTo) {
+    stagingDir = resolve(stageTo);
+    if (existsSync(stagingDir)) {
+      const entries = await readdir(stagingDir);
+      if (entries.length > 0) {
+        if (!force) {
+          throw new Error(
+            `stageTo directory is not empty: ${stagingDir}. Pass force: true to clear it.`,
+          );
+        }
+        await rm(stagingDir, { recursive: true, force: true });
+      }
+    }
+    await mkdir(stagingDir, { recursive: true });
+  } else {
+    stagingDir = join(workDir, "package");
+    await mkdir(stagingDir, { recursive: true });
+  }
   log(`Staging: ${stagingDir}`);
 
   try {
@@ -100,7 +141,7 @@ export async function tsNodePack(
 
     if (shouldRunTsc) {
       log("Phase 4: Generating derived tsconfig...");
-      const emitConfigPath = join(tmpDir, "tsconfig.emit.json");
+      const emitConfigPath = join(workDir, "tsconfig.emit.json");
       // tsc's typeRoots walk-up starts at the config's directory, so it
       // can't reach packageDir/node_modules/@types from our temp-dir
       // location. Pin typeRoots when that directory exists. (TS 6.0
@@ -187,26 +228,31 @@ export async function tsNodePack(
     await validate(stagingDir, rewrittenPkg, log);
 
     // ── Phase 9: Pack ─────────────────────────────────────────────────────
-    if (!emitOnly) {
+    if (!skipPack) {
       log("Phase 9: Packing...");
       const tgzPath = await pack(stagingDir);
       const tgzName = basename(tgzPath);
       const dest = join(process.cwd(), tgzName);
       await copyFile(tgzPath, dest);
+      // In stageTo mode the whole staging dir survives into the caller's
+      // filesystem, so the intermediate .tgz that `npm pack` wrote in
+      // there would stick around as visible clutter. Remove it. (In
+      // default mode the entire workDir is rm'd in Phase 10, so this
+      // unlink is redundant but harmless.)
+      if (stageTo) await unlink(tgzPath);
       log(`Created: ${dest}`);
       return dest;
     }
 
-    log(`Emit-only mode. Staging directory: ${stagingDir}`);
+    log(`Skip-pack mode. Staging directory: ${stagingDir}`);
     return stagingDir;
   } finally {
     // ── Phase 10: Cleanup ───────────────────────────────────────────────
-    if (!emitOnly && !keepTemp) {
-      log("Phase 10: Cleaning up temp directory...");
-      await rm(tmpDir, { recursive: true, force: true });
-    } else if (keepTemp) {
-      log(`Keeping temp directory: ${tmpDir}`);
-    }
+    // Always rm the work dir. In default mode this also removes the
+    // staging dir (nested inside). In stageTo mode the staging dir is
+    // the caller's directory and survives.
+    log("Phase 10: Cleaning up work directory...");
+    await rm(workDir, { recursive: true, force: true });
   }
 }
 
