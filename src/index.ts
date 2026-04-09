@@ -15,7 +15,8 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import packlist from "npm-packlist";
 import tsBlankSpace from "ts-blank-space";
-import { TS_SPECIFIER_PATTERNS, rewriteTsSpecifiers } from "./rewrite-specifiers.ts";
+import { rewriteTsSpecifiers } from "./rewrite-specifiers.ts";
+import { validate } from "./validation.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -658,102 +659,6 @@ function rewriteExportsValue(value, isTypesKey) {
     return result;
   }
   return value;
-}
-
-async function validate(stagingDir, pkg, log) {
-  const errors = [];
-
-  // Check .js/.mjs and .d.ts/.d.mts files for remaining .ts specifiers
-  const allFiles = await findFiles(
-    stagingDir,
-    (name) =>
-      name.endsWith(".js") ||
-      name.endsWith(".mjs") ||
-      name.endsWith(".d.ts") ||
-      name.endsWith(".d.mts"),
-  );
-
-  for (const filePath of allFiles) {
-    const raw = await readFile(filePath, "utf8");
-    // Strip block and line comments before scanning so JSDoc examples that
-    // literally contain strings like `import './foo.ts'` don't register as
-    // false positives. Comment stripping here is intentionally coarse
-    // (doesn't understand strings-containing-comment-markers) — good enough
-    // for tsc-emitted output, where comments are well-behaved.
-    const content = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
-    const relPath = relative(stagingDir, filePath);
-
-    for (const pattern of TS_SPECIFIER_PATTERNS) {
-      for (const m of content.matchAll(pattern)) {
-        errors.push(`${relPath}: remaining .ts specifier: ${m[0]}`);
-      }
-    }
-  }
-
-  // Check package.json for .ts references in entry points
-  const entryFields = ["main", "module", "types", "typings"];
-  for (const field of entryFields) {
-    if (typeof pkg[field] === "string" && /(?<!\.d)\.(tsx?|mts)$/.test(pkg[field])) {
-      errors.push(`package.json "${field}" still references .ts: ${pkg[field]}`);
-    }
-  }
-
-  // Non-fatal: yarn/npm tolerate `bin`/`main` pointing at missing
-  // files. Real transformation bugs are caught by the specifier
-  // checks above.
-  const referencedFiles = collectReferencedFiles(pkg);
-  for (const ref of referencedFiles) {
-    if (!existsSync(join(stagingDir, ref))) {
-      log(`  Warning: referenced file missing from tarball: ${ref}`);
-    }
-  }
-
-  if (errors.length > 0) {
-    const msg = "Validation failed:\n  " + errors.join("\n  ");
-    throw new Error(msg);
-  }
-
-  log(`Validated ${allFiles.length} file(s), no issues found`);
-}
-
-function collectReferencedFiles(pkg) {
-  const refs = new Set<string>();
-
-  for (const field of ["main", "module", "types", "typings"]) {
-    if (typeof pkg[field] === "string") {
-      refs.add(pkg[field].replace(/^\.\//, ""));
-    }
-  }
-
-  if (typeof pkg.bin === "string") {
-    refs.add(pkg.bin.replace(/^\.\//, ""));
-  } else if (typeof pkg.bin === "object" && pkg.bin !== null) {
-    for (const v of Object.values(pkg.bin)) {
-      if (typeof v === "string") refs.add(v.replace(/^\.\//, ""));
-    }
-  }
-
-  if (pkg.exports) {
-    collectExportsRefs(pkg.exports, refs);
-  }
-
-  return refs;
-}
-
-function collectExportsRefs(value, refs) {
-  if (typeof value === "string") {
-    refs.add(value.replace(/^\.\//, ""));
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const v of value) collectExportsRefs(v, refs);
-    return;
-  }
-  if (typeof value === "object" && value !== null) {
-    for (const v of Object.values(value)) {
-      collectExportsRefs(v, refs);
-    }
-  }
 }
 
 async function pack(stagingDir) {
