@@ -83,21 +83,20 @@ export async function tsNodePack(
     log(`Copied ${packFiles.length} file(s) into staging`);
 
     // ── Phase 4: Decide whether to run tsc, generate config if so ────────
-    // Three conditions trigger declaration emit:
-    //   1. user passed --tsconfig (explicit opt-in)
-    //   2. tsconfig.build.json exists (agoric convention for opt-in)
-    //   3. any source contains .ts/.tsx/.mts (we'd be stripping them
-    //      anyway, and probably want their declarations)
-    // For pure JS+JSDoc packages with only `tsconfig.json` and no .ts
-    // sources, this skips tsc entirely — matching what `npm pack` would
-    // have done before ts-node-pack: ship .js files, no .d.ts.
+    // Trigger declaration emit only when there's something to derive:
+    //   1. user passed --tsconfig (explicit opt-in), OR
+    //   2. any source contains .ts/.tsx/.mts (we'd be stripping them
+    //      anyway, and probably want their declarations).
+    // The mere presence of tsconfig.build.json is NOT enough — monorepos
+    // commonly keep one per package for a root project-references build
+    // (`tsc --build`) without intending each package to be independently
+    // emit-able. Pure JS+JSDoc packages with no .ts sources skip tsc and
+    // ship whatever .js files are already in the packlist, matching plain
+    // `npm pack` semantics.
     const hasTsSources = packFiles.some(
       (f) => /\.(ts|tsx|mts)$/.test(f) && !/\.d\.(ts|mts)$/.test(f),
     );
-    const isExplicitOptIn =
-      tsconfigPath !== null &&
-      (tsconfig !== undefined || basename(tsconfigPath) === "tsconfig.build.json");
-    const shouldRunTsc = tsconfigPath !== null && (isExplicitOptIn || hasTsSources);
+    const shouldRunTsc = tsconfigPath !== null && (tsconfig !== undefined || hasTsSources);
 
     if (shouldRunTsc) {
       log("Phase 4: Generating derived tsconfig...");
