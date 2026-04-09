@@ -148,6 +148,40 @@ describe("pipeline: workspace-root/packages/consumer fixture", () => {
   });
 });
 
+// ── pure-JS package with no tsconfig at all ───────────────────────────────
+
+describe("pipeline: pure-js fixture (no tsconfig)", () => {
+  // Regression for a class of agoric-sdk packages (golang/cosmos,
+  // packages/eslint-config, packages/wallet, packages/cosmic-swingset,
+  // packages/telemetry) that have no tsconfig.build.json and either
+  // no .ts sources or no tsconfig.json. Such packages should pack
+  // successfully without ts-node-pack invoking tsc — matching what
+  // `npm pack` would have produced.
+  let staging;
+
+  beforeAll(async () => {
+    staging = await packFixture("pure-js");
+  }, 60_000);
+
+  it("packs without invoking tsc", () => {
+    assert.ok(existsSync(join(staging, "package.json")));
+    assert.ok(existsSync(join(staging, "src/index.js")));
+  });
+
+  it("emits no .d.ts files (no opt-in to declarations)", async () => {
+    const { readdir } = await import("node:fs/promises");
+    const srcEntries = await readdir(join(staging, "src"));
+    const dts = srcEntries.filter((f) => f.endsWith(".d.ts"));
+    assert.deepEqual(dts, [], "no .d.ts files should exist");
+  });
+
+  it("preserves the original .js content verbatim", async () => {
+    const orig = await readFile(join(fixtures, "pure-js/src/index.js"), "utf8");
+    const staged = await readFile(join(staging, "src/index.js"), "utf8");
+    assert.equal(staged, orig);
+  });
+});
+
 // ── JSDoc examples that LOOK like .ts specifiers (our own source!) ────────
 
 describe("pipeline: JSDoc specifier false-positives", () => {

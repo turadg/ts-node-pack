@@ -45,7 +45,7 @@ export async function tsNodePack(
   log(`Package: ${pkgJson.name}@${pkgJson.version}`);
 
   const tsconfigPath = resolveTsconfig(packageDir, tsconfig);
-  log(`Using tsconfig: ${tsconfigPath}`);
+  if (tsconfigPath) log(`Found tsconfig: ${tsconfigPath}`);
 
   // ── Phase 2: Create staging directory ─────────────────────────────────
   log("Phase 2: Creating staging directory...");
@@ -55,79 +55,25 @@ export async function tsNodePack(
   log(`Staging: ${stagingDir}`);
 
   try {
-    // ── Phase 3: Generate derived tsconfig ────────────────────────────────
-    // Written inside the temp dir — never touches the source tree.
-    // `extends` takes an absolute path; paths defined by the base tsconfig
-    // (include/files/exclude/rootDir/paths) resolve relative to the base
-    // config's own location, which is still inside packageDir, so globs
-    // continue to work.
-    log("Phase 3: Generating derived tsconfig...");
-    const emitConfigPath = join(tmpDir, "tsconfig.emit.json");
-
-    // Because the emit config lives outside packageDir, tsc's typeRoots
-    // walk-up (which starts at the config's directory) can't reach
-    // packageDir/node_modules/@types. Pin typeRoots explicitly when that
-    // directory exists so entries named in the base config's `types`
-    // field — e.g. `types: ["node"]` — can be resolved. TS 6.0 made this
-    // explicit opt-in (no more auto-inclusion of every @types package),
-    // which surfaces the missing resolution as a clear TS2688 error
-    // rather than silent "Cannot find module 'node:util'".
-    const atTypesDir = join(packageDir, "node_modules", "@types");
-    const hasAtTypes = existsSync(atTypesDir);
-
-    const emitConfig = {
-      extends: tsconfigPath,
-      compilerOptions: {
-        // Force rootDir so emit preserves the source layout — otherwise
-        // tsc infers the common ancestor and strips the `src/` prefix,
-        // breaking `main`/`exports` that reference `./src/...`.
-        rootDir: packageDir,
-        outDir: stagingDir,
-        declaration: true,
-        // ts-blank-space handles .js emit (Phase 6); tsc only emits .d.ts.
-        emitDeclarationOnly: true,
-        // Extract types from JS+JSDoc sources in mixed packages.
-        allowJs: true,
-        noEmit: false,
-        // Incremental/composite would try to write a .tsbuildinfo whose
-        // path tsc computes relative to the base config, producing
-        // garbled paths when our outDir crosses directory trees.
-        incremental: false,
-        composite: false,
-        tsBuildInfoFile: null,
-        ...(hasAtTypes ? { typeRoots: [atTypesDir] } : {}),
-      },
-    };
-    await writeFile(emitConfigPath, JSON.stringify(emitConfig, null, 2) + "\n");
-
-    // ── Phase 4: Copy the npm-packlist into staging ──────────────────────
+    // ── Phase 3: Copy the npm-packlist into staging ──────────────────────
     // `npm-packlist` is the same file-enumeration engine `npm pack` uses
     // internally. It applies `files`, `.npmignore`, the npm default
     // includes (package.json, README*, LICENSE*) and default excludes
     // (.git, node_modules, ...) — so the staging directory ends up as a
     // faithful mirror of whatever `npm pack` would have produced from
-    // the source tree, minus our downstream transforms (ts-blank-space,
-    // declaration emit, specifier rewrite).
-    log("Phase 4: Enumerating package files via npm-packlist...");
-    // npm-packlist's tree-based API (v7+) expects a node with `path` +
-    // parsed `package.json`. We fabricate a minimal tree rather than
-    // pulling in @npmcli/arborist — we don't need bundled-dependency
-    // resolution, workspace walking, or the rest of arborist's
-    // machinery, just the pack-file list.
+    // the source tree, minus our downstream transforms.
     //
-    // `isProjectRoot: true` sends npm-packlist down the
-    // "root package" branch of `gatherBundles`, which looks only at
-    // bundleDependencies (missing here, so no-op). Without this, it
-    // takes the "bundled dep of some other project" branch and tries
-    // to walk `edgesOut` — which doesn't exist on our hand-built tree.
+    // `isProjectRoot: true` sends npm-packlist down its "root package"
+    // branch — without it, it tries to walk `edgesOut` which doesn't
+    // exist on our hand-built tree (no @npmcli/arborist).
+    log("Phase 3: Enumerating package files via npm-packlist...");
     const packFiles = await packlist({
       path: packageDir,
       package: pkgJson,
       isProjectRoot: true,
     });
-    // Pre-create every parent directory serially (mkdir on the same
-    // path from multiple concurrent calls can race), then copy files
-    // in parallel.
+    // Pre-create unique parent dirs serially (concurrent mkdir on the
+    // same path can race on some filesystems), then copy in parallel.
     const dirs = new Set<string>(packFiles.map((rel) => dirname(join(stagingDir, rel))));
     for (const d of dirs) await mkdir(d, { recursive: true });
     await Promise.all(
@@ -135,15 +81,68 @@ export async function tsNodePack(
     );
     log(`Copied ${packFiles.length} file(s) into staging`);
 
-    // ── Phase 5: Emit declarations via tsc ──────────────────────────────
-    // tsc reads sources from packageDir (the base config's include
-    // resolves there) and writes .d.ts files into stagingDir via outDir.
-    // The copies from Phase 4 are left alone — tsc's outputs land
-    // alongside them. tsc may emit declarations for files outside the
-    // `files` array (e.g. test/); those won't make it into the final
-    // tarball because npm pack only ships what `files` references.
-    log("Phase 5: Emitting .d.ts files via tsc...");
-    await runTsc(emitConfigPath, packageDir, log);
+    // ── Phase 4: Decide whether to run tsc, generate config if so ────────
+    // Three conditions trigger declaration emit:
+    //   1. user passed --tsconfig (explicit opt-in)
+    //   2. tsconfig.build.json exists (agoric convention for opt-in)
+    //   3. any source contains .ts/.tsx/.mts (we'd be stripping them
+    //      anyway, and probably want their declarations)
+    // For pure JS+JSDoc packages with only `tsconfig.json` and no .ts
+    // sources, this skips tsc entirely — matching what `npm pack` would
+    // have done before ts-node-pack: ship .js files, no .d.ts.
+    const hasTsSources = packFiles.some(
+      (f) => /\.(ts|tsx|mts)$/.test(f) && !/\.d\.(ts|mts)$/.test(f),
+    );
+    const isExplicitOptIn =
+      tsconfigPath !== null &&
+      (tsconfig !== undefined || basename(tsconfigPath) === "tsconfig.build.json");
+    const shouldRunTsc = tsconfigPath !== null && (isExplicitOptIn || hasTsSources);
+
+    if (shouldRunTsc) {
+      log("Phase 4: Generating derived tsconfig...");
+      const emitConfigPath = join(tmpDir, "tsconfig.emit.json");
+      // tsc's typeRoots walk-up starts at the config's directory, so it
+      // can't reach packageDir/node_modules/@types from our temp-dir
+      // location. Pin typeRoots when that directory exists. (TS 6.0
+      // surfaces the missing resolution as TS2688 instead of the silent
+      // "Cannot find module 'node:util'" cascade of earlier versions.)
+      const atTypesDir = join(packageDir, "node_modules", "@types");
+      const hasAtTypes = existsSync(atTypesDir);
+      const emitConfig = {
+        extends: tsconfigPath,
+        compilerOptions: {
+          // Force rootDir so emit preserves the source layout —
+          // otherwise tsc infers the common ancestor and strips the
+          // `src/` prefix, breaking `main`/`exports` that reference
+          // `./src/...`.
+          rootDir: packageDir,
+          outDir: stagingDir,
+          declaration: true,
+          // ts-blank-space handles .js emit (Phase 6); tsc only emits .d.ts.
+          emitDeclarationOnly: true,
+          // Extract types from JS+JSDoc sources in mixed packages.
+          allowJs: true,
+          noEmit: false,
+          // Incremental/composite write a .tsbuildinfo whose path tsc
+          // computes relative to the base config, producing garbled
+          // paths when our outDir crosses directory trees.
+          incremental: false,
+          composite: false,
+          tsBuildInfoFile: null,
+          ...(hasAtTypes ? { typeRoots: [atTypesDir] } : {}),
+        },
+      };
+      await writeFile(emitConfigPath, JSON.stringify(emitConfig, null, 2) + "\n");
+
+      log("Phase 5: Emitting .d.ts files via tsc...");
+      await runTsc(emitConfigPath, packageDir, log);
+    } else {
+      log(
+        tsconfigPath === null
+          ? "Phase 4-5: Skipping tsc (no tsconfig found; pure-JS package)"
+          : "Phase 4-5: Skipping tsc (no .ts sources and no tsconfig.build.json opt-in)",
+      );
+    }
 
     // ── Phase 6: Strip types and rewrite specifiers ─────────────────────
     // Single-pass transform of every staging file that could contain a
@@ -200,7 +199,12 @@ export async function tsNodePack(
 
 // ── Phase helpers ──────────────────────────────────────────────────────────
 
-function resolveTsconfig(packageDir, tsconfigOption) {
+/**
+ * Find the tsconfig to extend, or null if the package has no TypeScript
+ * config at all (pure JS package). The `--tsconfig` flag is the one
+ * explicit case where missing-config is fatal.
+ */
+function resolveTsconfig(packageDir, tsconfigOption): string | null {
   if (tsconfigOption) {
     const p = resolve(packageDir, tsconfigOption);
     if (!existsSync(p)) {
@@ -208,14 +212,11 @@ function resolveTsconfig(packageDir, tsconfigOption) {
     }
     return p;
   }
-
   const buildConfig = join(packageDir, "tsconfig.build.json");
   if (existsSync(buildConfig)) return buildConfig;
-
   const defaultConfig = join(packageDir, "tsconfig.json");
   if (existsSync(defaultConfig)) return defaultConfig;
-
-  throw new Error(`No tsconfig found in ${packageDir}. Provide one with --tsconfig.`);
+  return null;
 }
 
 /**

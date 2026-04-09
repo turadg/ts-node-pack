@@ -1,6 +1,6 @@
 {
   "name": "ts-node-pack",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pack a TypeScript package into a Node-compatible npm tarball without modifying the source tree",
   "keywords": [
     "cli",
