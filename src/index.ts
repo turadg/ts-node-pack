@@ -15,6 +15,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import packlist from "npm-packlist";
 import tsBlankSpace from "ts-blank-space";
+import { TS_SPECIFIER_PATTERNS, rewriteTsSpecifiers } from "./rewrite-specifiers.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -320,71 +321,6 @@ async function processStagingFiles(stagingDir, log) {
     }
   }
   return { strippedCount, rewrittenCount };
-}
-
-/**
- * Rewrite .ts/.tsx extensions to .js in relative import/export specifiers.
- *
- * Why regex is sound here:
- *
- *   The input is exclusively tsc-generated .d.ts files, not arbitrary source.
- *   tsc emits a highly constrained subset of syntax in declarations:
- *
- *   - Import/export specifiers are always single-line string literals.
- *   - Specifiers are always wrapped in matching quotes (' or ").
- *   - Relative paths always start with ./ or ../ (tsc never normalizes these).
- *   - No template literals, concatenation, or computed specifiers appear.
- *   - The only keywords introducing module specifiers are `from`, `import`,
- *     and `import()`.
- *
- *   Because the grammar of specifiers in .d.ts output is regular (a finite
- *   set of keyword prefixes + a quoted string literal), regex matches it
- *   exactly — no ambiguity, no context-sensitivity, no false positives.
- *
- *   If tsc ever adds native .d.ts rewriting (TypeScript#56556), this
- *   function becomes a no-op: the `if (rewritten !== original)` guard
- *   in rewriteDtsFiles means no file is touched.
- *
- * Handles:
- *  - Named/default/type imports:  import { x } from './foo.ts'
- *  - Re-exports:                  export { x } from './foo.ts'
- *  - Star re-exports:             export * from './foo.ts'
- *  - Side-effect imports:         import './foo.ts'
- *  - Dynamic imports:             import('./foo.ts')
- *  - .tsx extensions:             import './component.tsx'
- *
- * Does NOT rewrite (by design):
- *  - Non-relative specifiers:     import 'lodash'
- *  - Already-.js specifiers:      import './foo.js'
- *  - import.meta.url:             not a module specifier
- *  - require():                   not valid in ESM .d.ts
- *  - Bare string literals:        const x = './foo.ts'
- */
-// Three shapes for a relative TypeScript specifier in a string literal:
-//   1. `from './foo.ts'`         — named/default/type imports, re-exports
-//   2. `import './foo.ts'`       — bare side-effect imports
-//   3. `import('./foo.ts')`      — dynamic imports
-//
-// The extension capture group matches `ts`, `tsx`, or `mts`. Rewriting
-// turns `.ts`/`.tsx` into `.js` and `.mts` into `.mjs`, matching the
-// output extensions ts-blank-space produces in Phase 6.
-//
-// Used both to rewrite specifiers and (in the validator) to detect any
-// specifier that slipped through. Must stay in sync with each other.
-export const TS_SPECIFIER_PATTERNS = [
-  /(from\s*['"])(\.\.?\/[^'"]*?)\.(tsx?|mts)(['"])/g,
-  /(import\s+['"])(\.\.?\/[^'"]*?)\.(tsx?|mts)(['"])/g,
-  /(import\s*\(\s*['"])(\.\.?\/[^'"]*?)\.(tsx?|mts)(['"]\s*\))/g,
-];
-
-export function rewriteTsSpecifiers(content) {
-  for (const pattern of TS_SPECIFIER_PATTERNS) {
-    content = content.replace(
-      pattern,
-      (_m, pre, path, ext, post) => pre + path + (ext === "mts" ? ".mjs" : ".js") + post,
-    );
-  }
-  return content;
 }
 
 const DEP_FIELDS_WITH_WORKSPACE = [

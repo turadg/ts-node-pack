@@ -2,7 +2,7 @@
 
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
-import { rewriteTsSpecifiers } from "../src/index.ts";
+import { rewriteTsSpecifiers } from "../src/rewrite-specifiers.ts";
 
 // ── from specifiers ─────────────────────────────────────────────────────────
 
@@ -222,13 +222,6 @@ describe("rewriteTsSpecifiers — should NOT rewrite", () => {
     assert.equal(rewriteTsSpecifiers(`const path = './foo.ts';`), `const path = './foo.ts';`);
   });
 
-  it("does not rewrite require() calls", () => {
-    assert.equal(
-      rewriteTsSpecifiers(`const m = require('./foo.ts');`),
-      `const m = require('./foo.ts');`,
-    );
-  });
-
   it("does not rewrite import.meta.url", () => {
     assert.equal(
       rewriteTsSpecifiers(`const url = import.meta.url;`),
@@ -413,5 +406,188 @@ import c from './c.mjs';
 
   it("does not rewrite .mts inside a bare string literal", () => {
     assert.equal(rewriteTsSpecifiers(`const p = './foo.mts';`), `const p = './foo.mts';`);
+  });
+});
+
+// ── require() — CommonJS specifiers ────────────────────────────────────────
+//
+// Coverage parity with the agoric-sdk rewrite-ts-import-specifiers.mjs
+// script that the migration replaced. agoric never had `require('./x.ts')`
+// in the wild, but the script defended against it; we should too, since
+// any `.cjs` consumer of a TS-authored package would otherwise ship a
+// broken require.
+
+describe("rewriteTsSpecifiers — require() calls", () => {
+  it("rewrites require('./foo.ts')", () => {
+    assert.equal(
+      rewriteTsSpecifiers(`const m = require('./foo.ts');`),
+      `const m = require('./foo.js');`,
+    );
+  });
+
+  it("rewrites require with double quotes", () => {
+    assert.equal(
+      rewriteTsSpecifiers(`const m = require("./foo.ts");`),
+      `const m = require("./foo.js");`,
+    );
+  });
+
+  it("rewrites require('./foo.tsx')", () => {
+    assert.equal(
+      rewriteTsSpecifiers(`const m = require('./component.tsx');`),
+      `const m = require('./component.js');`,
+    );
+  });
+
+  it("rewrites require('./foo.mts') to .mjs", () => {
+    assert.equal(
+      rewriteTsSpecifiers(`const m = require('./foo.mts');`),
+      `const m = require('./foo.mjs');`,
+    );
+  });
+
+  it("rewrites require with whitespace inside the parens", () => {
+    assert.equal(
+      rewriteTsSpecifiers(`const m = require( './foo.ts' );`),
+      `const m = require( './foo.js' );`,
+    );
+  });
+
+  it("does not rewrite non-relative require", () => {
+    assert.equal(
+      rewriteTsSpecifiers(`const lodash = require('lodash');`),
+      `const lodash = require('lodash');`,
+    );
+  });
+
+  it("does not rewrite require for .json or .cjs", () => {
+    const input = `const a = require('./data.json');\nconst b = require('./helper.cjs');`;
+    assert.equal(rewriteTsSpecifiers(input), input);
+  });
+
+  it("does not rewrite require of .d.ts (declaration file)", () => {
+    assert.equal(
+      rewriteTsSpecifiers(`const t = require('./types.d.ts');`),
+      `const t = require('./types.d.ts');`,
+    );
+  });
+
+  it("does not rewrite a custom function whose name ends in 'require'", () => {
+    // Word-boundary anchor on \brequire\b prevents this false positive.
+    assert.equal(
+      rewriteTsSpecifiers(`const m = customrequire('./foo.ts');`),
+      `const m = customrequire('./foo.ts');`,
+    );
+  });
+});
+
+// ── declare module — TypeScript ambient module declarations ────────────────
+
+describe("rewriteTsSpecifiers — declare module", () => {
+  it("rewrites declare module './foo.ts'", () => {
+    assert.equal(
+      rewriteTsSpecifiers(`declare module './foo.ts' { export const x: number; }`),
+      `declare module './foo.js' { export const x: number; }`,
+    );
+  });
+
+  it("rewrites declare module with double quotes", () => {
+    assert.equal(
+      rewriteTsSpecifiers(`declare module "./foo.ts" {}`),
+      `declare module "./foo.js" {}`,
+    );
+  });
+
+  it("rewrites declare module './foo.mts' to .mjs", () => {
+    assert.equal(
+      rewriteTsSpecifiers(`declare module './foo.mts' {}`),
+      `declare module './foo.mjs' {}`,
+    );
+  });
+
+  it("does not rewrite declare module 'global-name' (non-relative)", () => {
+    assert.equal(
+      rewriteTsSpecifiers(`declare module '*.svg' { const url: string; export default url; }`),
+      `declare module '*.svg' { const url: string; export default url; }`,
+    );
+  });
+});
+
+// ── triple-slash reference path directives ─────────────────────────────────
+
+describe("rewriteTsSpecifiers — triple-slash reference path", () => {
+  it('rewrites /// <reference path="./foo.ts" />', () => {
+    assert.equal(
+      rewriteTsSpecifiers(`/// <reference path="./foo.ts" />`),
+      `/// <reference path="./foo.js" />`,
+    );
+  });
+
+  it("rewrites with single quotes", () => {
+    assert.equal(
+      rewriteTsSpecifiers(`/// <reference path='./foo.ts' />`),
+      `/// <reference path='./foo.js' />`,
+    );
+  });
+
+  it("rewrites with no whitespace around the equals", () => {
+    assert.equal(
+      rewriteTsSpecifiers(`/// <reference path="./foo.ts"/>`),
+      `/// <reference path="./foo.js"/>`,
+    );
+  });
+
+  it("does not rewrite reference of .d.ts (declaration file)", () => {
+    assert.equal(
+      rewriteTsSpecifiers(`/// <reference path="./types.d.ts" />`),
+      `/// <reference path="./types.d.ts" />`,
+    );
+  });
+
+  it("does not rewrite <reference types=...> (different attribute)", () => {
+    assert.equal(
+      rewriteTsSpecifiers(`/// <reference types="node" />`),
+      `/// <reference types="node" />`,
+    );
+  });
+
+  it("does not rewrite <reference lib=...>", () => {
+    assert.equal(
+      rewriteTsSpecifiers(`/// <reference lib="es2022" />`),
+      `/// <reference lib="es2022" />`,
+    );
+  });
+});
+
+// ── word-boundary false-positive prevention ────────────────────────────────
+//
+// Without `\b` anchors, our regex would match the `from` substring
+// inside identifiers like `myfrom` or `customFrom`. Lock the contract.
+
+describe("rewriteTsSpecifiers — word-boundary anchors", () => {
+  it("does not rewrite a function call whose name ends in 'from'", () => {
+    assert.equal(
+      rewriteTsSpecifiers(`const x = customfrom('./foo.ts');`),
+      `const x = customfrom('./foo.ts');`,
+    );
+  });
+
+  it("does not rewrite a function call whose name ends in 'import'", () => {
+    assert.equal(
+      rewriteTsSpecifiers(`const x = lazyimport './foo.ts';`),
+      `const x = lazyimport './foo.ts';`,
+    );
+  });
+
+  it("still rewrites 'from' after a closing brace and space", () => {
+    // Common case: `import { foo } from './bar.ts'`
+    assert.equal(
+      rewriteTsSpecifiers(`import { foo } from './bar.ts';`),
+      `import { foo } from './bar.js';`,
+    );
+  });
+
+  it("still rewrites 'from' at the start of a line", () => {
+    assert.equal(rewriteTsSpecifiers(`from './bar.ts'`), `from './bar.js'`);
   });
 });
