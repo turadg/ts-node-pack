@@ -595,7 +595,7 @@ export function rewritePackageJson(pkg) {
   } else if (result.typings) {
     result.typings = rewriteTsToDts(result.typings);
   } else if (mainWasTs) {
-    result.types = result.main.replace(/\.js$/, ".d.ts");
+    result.types = rewriteTsToDts(originalMain);
   }
 
   // Rewrite bin
@@ -617,7 +617,7 @@ export function rewritePackageJson(pkg) {
   // Rewrite files array
   if (Array.isArray(result.files)) {
     result.files = result.files.flatMap((f) => {
-      if (typeof f === "string" && /\.tsx?$/.test(f)) {
+      if (typeof f === "string" && TS_SOURCE_EXT_RE.test(f)) {
         return [rewriteTsToJs(f), rewriteTsToDts(f)];
       }
       return [f];
@@ -627,13 +627,21 @@ export function rewritePackageJson(pkg) {
   return result;
 }
 
+// `.ts`/`.tsx` → `.js`; `.mts` → `.mjs`. Matches what `ts-blank-space`
+// writes in Phase 6 and the specifier-rewrite pass in rewrite-specifiers.ts.
 function rewriteTsToJs(p) {
-  return typeof p === "string" ? p.replace(/\.tsx?$/, ".js") : p;
+  if (typeof p !== "string") return p;
+  return p.replace(/\.mts$/, ".mjs").replace(/\.tsx?$/, ".js");
 }
 
+// `.ts`/`.tsx` → `.d.ts`; `.mts` → `.d.mts`. Matches the declaration files
+// tsc emits from an .mts source.
 function rewriteTsToDts(p) {
-  return typeof p === "string" ? p.replace(/\.tsx?$/, ".d.ts") : p;
+  if (typeof p !== "string") return p;
+  return p.replace(/\.mts$/, ".d.mts").replace(/\.tsx?$/, ".d.ts");
 }
+
+const TS_SOURCE_EXT_RE = /\.(tsx?|mts)$/;
 
 function rewriteExportsValue(value, isTypesKey) {
   if (typeof value === "string") {
@@ -655,10 +663,14 @@ function rewriteExportsValue(value, isTypesKey) {
 async function validate(stagingDir, pkg, log) {
   const errors = [];
 
-  // Check .js and .d.ts files for remaining .ts specifiers
+  // Check .js/.mjs and .d.ts/.d.mts files for remaining .ts specifiers
   const allFiles = await findFiles(
     stagingDir,
-    (name) => name.endsWith(".js") || name.endsWith(".d.ts"),
+    (name) =>
+      name.endsWith(".js") ||
+      name.endsWith(".mjs") ||
+      name.endsWith(".d.ts") ||
+      name.endsWith(".d.mts"),
   );
 
   for (const filePath of allFiles) {
@@ -681,7 +693,7 @@ async function validate(stagingDir, pkg, log) {
   // Check package.json for .ts references in entry points
   const entryFields = ["main", "module", "types", "typings"];
   for (const field of entryFields) {
-    if (typeof pkg[field] === "string" && /(?<!\.d)\.tsx?$/.test(pkg[field])) {
+    if (typeof pkg[field] === "string" && /(?<!\.d)\.(tsx?|mts)$/.test(pkg[field])) {
       errors.push(`package.json "${field}" still references .ts: ${pkg[field]}`);
     }
   }

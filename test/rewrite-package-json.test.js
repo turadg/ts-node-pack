@@ -22,6 +22,16 @@ describe("rewritePackageJson — entry fields", () => {
     const out = rewritePackageJson({ main: "./dist/index.js" });
     assert.equal(out.main, "./dist/index.js");
   });
+
+  it("rewrites .mts main to .mjs", () => {
+    const out = rewritePackageJson({ main: "./src/index.mts" });
+    assert.equal(out.main, "./src/index.mjs");
+  });
+
+  it("rewrites .mts module to .mjs", () => {
+    const out = rewritePackageJson({ module: "./src/index.mts" });
+    assert.equal(out.module, "./src/index.mjs");
+  });
 });
 
 describe("rewritePackageJson — types", () => {
@@ -57,6 +67,17 @@ describe("rewritePackageJson — types", () => {
     const out = rewritePackageJson({ main: "./index.js" });
     assert.equal(out.types, undefined);
   });
+
+  it("rewrites explicit types .mts to .d.mts", () => {
+    const out = rewritePackageJson({ types: "./src/index.mts" });
+    assert.equal(out.types, "./src/index.d.mts");
+  });
+
+  it("derives .d.mts types from .mts main", () => {
+    const out = rewritePackageJson({ main: "./src/index.mts" });
+    assert.equal(out.main, "./src/index.mjs");
+    assert.equal(out.types, "./src/index.d.mts");
+  });
 });
 
 describe("rewritePackageJson — bin", () => {
@@ -73,6 +94,11 @@ describe("rewritePackageJson — bin", () => {
       foo: "./src/foo.js",
       bar: "./src/bar.js",
     });
+  });
+
+  it("rewrites .mts bin to .mjs", () => {
+    const out = rewritePackageJson({ bin: "./src/cli.mts" });
+    assert.equal(out.bin, "./src/cli.mjs");
   });
 });
 
@@ -114,6 +140,25 @@ describe("rewritePackageJson — exports", () => {
     });
   });
 
+  it("rewrites .mts conditional exports to .mjs and .d.mts", () => {
+    const out = rewritePackageJson({
+      exports: {
+        ".": {
+          types: "./src/index.mts",
+          import: "./src/index.mts",
+          default: "./src/index.mts",
+        },
+      },
+    });
+    assert.deepEqual(out.exports, {
+      ".": {
+        types: "./src/index.d.mts",
+        import: "./src/index.mjs",
+        default: "./src/index.mjs",
+      },
+    });
+  });
+
   it("handles nested conditions (types inside a subpath's import)", () => {
     const out = rewritePackageJson({
       exports: {
@@ -149,6 +194,13 @@ describe("rewritePackageJson — files array", () => {
       files: ["src/index.ts", "README.md"],
     });
     assert.deepEqual(out.files, ["src/index.js", "src/index.d.ts", "README.md"]);
+  });
+
+  it("expands .mts entries to both .mjs and .d.mts", () => {
+    const out = rewritePackageJson({
+      files: ["src/index.mts", "README.md"],
+    });
+    assert.deepEqual(out.files, ["src/index.mjs", "src/index.d.mts", "README.md"]);
   });
 
   it("leaves non-.ts entries alone", () => {
