@@ -47,6 +47,16 @@ describe("rewritePackageJson — types", () => {
     });
     assert.equal(out.types, "./types/custom.d.ts");
   });
+
+  // Regression: pure JS+JSDoc packages (main ends in .js, no types field)
+  // used to come out with a synthesized `"types": "./index.d.ts"` pointing
+  // at a file that ts-node-pack never emits — npm publish then warns and
+  // TypeScript consumers see a broken types pointer. See @endo/ses-ava in
+  // the agoric/endo monorepo.
+  it("does not synthesize types when main is already .js", () => {
+    const out = rewritePackageJson({ main: "./index.js" });
+    assert.equal(out.types, undefined);
+  });
 });
 
 describe("rewritePackageJson — bin", () => {

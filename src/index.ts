@@ -534,15 +534,21 @@ export function rewritePackageJson(pkg) {
   delete result.scripts;
 
   // Rewrite entry points
+  const originalMain = result.main;
   if (result.main) result.main = rewriteTsToJs(result.main);
   if (result.module) result.module = rewriteTsToJs(result.module);
+  const mainWasTs = result.main !== originalMain;
 
-  // Rewrite or derive types
+  // Only synthesize a `types` field from `main` when `main` was a .ts
+  // source (a .d.ts will be emitted alongside the .js). For pure JS+JSDoc
+  // packages, inventing `"./index.d.ts"` would point at a file that
+  // ts-node-pack never creates — see @endo/ses-ava in agoric/endo, where
+  // this produced a dangling types pointer in published tarballs.
   if (result.types) {
     result.types = rewriteTsToDts(result.types);
   } else if (result.typings) {
     result.typings = rewriteTsToDts(result.typings);
-  } else if (result.main) {
+  } else if (mainWasTs) {
     result.types = result.main.replace(/\.js$/, ".d.ts");
   }
 
