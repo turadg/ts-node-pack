@@ -107,8 +107,21 @@ export async function tsNodePack(
       // location. Pin typeRoots when that directory exists. (TS 6.0
       // surfaces the missing resolution as TS2688 instead of the silent
       // "Cannot find module 'node:util'" cascade of earlier versions.)
-      const atTypesDir = join(packageDir, "node_modules", "@types");
-      const hasAtTypes = existsSync(atTypesDir);
+      // Walk upward to find the nearest ancestor that actually has
+      // node_modules/@types. Yarn 4's pnpm linker keeps `@types` only at
+      // the workspace root, so the package's own node_modules is empty.
+      const findAtTypes = (start: string): string | null => {
+        let dir = start;
+        while (true) {
+          const candidate = join(dir, "node_modules", "@types");
+          if (existsSync(candidate)) return candidate;
+          const parent = dirname(dir);
+          if (parent === dir) return null;
+          dir = parent;
+        }
+      };
+      const atTypesDir = findAtTypes(packageDir);
+      const hasAtTypes = atTypesDir !== null;
       const emitConfig = {
         extends: tsconfigPath,
         compilerOptions: {
