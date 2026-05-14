@@ -362,7 +362,7 @@ describe("rewriteTsSpecifiers — edge cases", () => {
 // the TS_SPECIFIER_PATTERNS used to match only `.ts`/`.tsx`, so any
 // package that imported `./foo.mts` would silently pass the specifier
 // through unchanged into the published `.mjs` output. `.mts` must
-// rewrite to `.mjs` (not `.js`), matching what ts-blank-space emits.
+// rewrite to `.mjs` (not `.js`), matching what amaro emits.
 
 describe("rewriteTsSpecifiers — .mts specifiers", () => {
   it("rewrites .mts import to .mjs", () => {

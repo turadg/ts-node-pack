@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import packlist from "npm-packlist";
-import tsBlankSpace from "ts-blank-space";
+import { transformSync } from "amaro";
 import { rewriteTsSpecifiers } from "./rewrite-specifiers.ts";
 import { validate } from "./validation.ts";
 
@@ -173,7 +173,7 @@ export async function tsNodePack(
           rootDir: packageDir,
           outDir: stagingDir,
           declaration: true,
-          // ts-blank-space handles .js emit (Phase 6); tsc only emits .d.ts.
+          // amaro handles .js emit (Phase 6); tsc only emits .d.ts.
           emitDeclarationOnly: true,
           // Extract types from JS+JSDoc sources in mixed packages.
           allowJs: true,
@@ -201,10 +201,10 @@ export async function tsNodePack(
 
     // ── Phase 6: Strip types and rewrite specifiers ─────────────────────
     // Single-pass transform of every staging file that could contain a
-    // relative module specifier: .ts/.mts get ts-blank-space'd then
+    // relative module specifier: .ts/.mts get type-stripped then
     // specifier-rewritten (one read, one write, original unlinked);
     // .js/.mjs/.d.ts/.d.mts just get specifier-rewritten in place.
-    // ts-blank-space preserves line and column positions, so no
+    // amaro preserves line and column positions, so no
     // sourcemaps are needed for debugging.
     log("Phase 6: Stripping types and rewriting specifiers...");
     const { strippedCount, rewrittenCount } = await processStagingFiles(stagingDir, log);
@@ -348,7 +348,7 @@ async function runTsc(emitConfigPath, cwd, log) {
  * changed, written once. Sourcemap files (.d.ts.map, .d.mts.map) are
  * skipped because they're binary-encoded JSON with no specifiers.
  *
- * Throws if ts-blank-space rejects a .ts/.mts file (non-erasable
+ * Throws if amaro rejects a .ts/.mts file (non-erasable
  * syntax like `enum`, `namespace`, or parameter properties).
  */
 async function processStagingFiles(stagingDir, log) {
@@ -372,16 +372,10 @@ async function processStagingFiles(stagingDir, log) {
 
     let content = source;
     if (isTs || isMts) {
-      const errors: string[] = [];
-      content = tsBlankSpace(source, (node) => {
-        errors.push(
-          `${rel}: unsupported non-erasable syntax: ${String(node.getText?.() ?? node).slice(0, 80)}`,
-        );
-      });
-      if (errors.length > 0) {
-        throw new Error(
-          "ts-blank-space rejected non-erasable TypeScript:\n  " + errors.join("\n  "),
-        );
+      try {
+        content = transformSync(source).code;
+      } catch (err: any) {
+        throw new Error(`amaro rejected TypeScript in ${rel}:\n  ${err.message}`);
       }
     }
     content = rewriteTsSpecifiers(content);
@@ -628,7 +622,7 @@ export function rewritePackageJson(pkg) {
   return result;
 }
 
-// `.ts`/`.tsx` → `.js`; `.mts` → `.mjs`. Matches what `ts-blank-space`
+// `.ts`/`.tsx` → `.js`; `.mts` → `.mjs`. Matches what amaro
 // writes in Phase 6 and the specifier-rewrite pass in rewrite-specifiers.ts.
 function rewriteTsToJs(p) {
   if (typeof p !== "string") return p;

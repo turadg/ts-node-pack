@@ -5,7 +5,7 @@
  * `../`) ending in `.ts`, `.tsx`, or `.mts`, embedded in one of six
  * specific syntactic contexts. The output replaces the extension with
  * `.js` (for `.ts`/`.tsx`) or `.mjs` (for `.mts`), matching what
- * `ts-blank-space` produces in the strip phase.
+ * amaro produces in the type stripping phase.
  *
  * Why regex is sound here:
  *
