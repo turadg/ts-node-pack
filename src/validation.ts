@@ -8,11 +8,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { TS_SPECIFIER_PATTERNS } from "./rewrite-specifiers.ts";
 
-export async function validate(
-  stagingDir,
-  pkg,
-  log: (...args: unknown[]) => void = () => {},
-) {
+export async function validate(stagingDir, pkg, log: (...args: unknown[]) => void = () => {}) {
   const errors = [];
 
   // Check .js/.mjs and .d.ts/.d.mts files for remaining .ts specifiers

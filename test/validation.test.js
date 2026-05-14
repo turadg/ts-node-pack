@@ -18,10 +18,11 @@ describe("collectReferencedFiles — strict fields", () => {
       types: "./dist/index.d.ts",
       typings: "./dist/index.d.ts",
     });
-    assert.deepEqual(
-      [...out.strict].sort(),
-      ["dist/index.d.ts", "dist/index.js", "dist/index.mjs"],
-    );
+    assert.deepEqual([...out.strict].sort(), [
+      "dist/index.d.ts",
+      "dist/index.js",
+      "dist/index.mjs",
+    ]);
     assert.equal(out.lenient.size, 0);
   });
 
@@ -44,10 +45,7 @@ describe("collectReferencedFiles — bin is lenient", () => {
   });
 
   it("puts each entry of object bin into lenient", () => {
-    assert.deepEqual(
-      lenient({ bin: { a: "./a.js", b: "./b.js" } }),
-      ["a.js", "b.js"],
-    );
+    assert.deepEqual(lenient({ bin: { a: "./a.js", b: "./b.js" } }), ["a.js", "b.js"]);
   });
 
   it("ignores non-string values inside object bin", () => {
@@ -85,10 +83,7 @@ describe("collectReferencedFiles — exports", () => {
   });
 
   it("walks array fallbacks in exports", () => {
-    assert.deepEqual(
-      strict({ exports: { ".": ["./a.js", "./b.js"] } }),
-      ["a.js", "b.js"],
-    );
+    assert.deepEqual(strict({ exports: { ".": ["./a.js", "./b.js"] } }), ["a.js", "b.js"]);
   });
 
   it("deduplicates the same path referenced twice", () => {
@@ -171,10 +166,8 @@ describe("validate — bin is lenient", () => {
   it("does not throw when `bin` points at a missing file", async () => {
     staged = await stage({ "index.js": "export {};\n" });
     const warnings = [];
-    await validate(
-      staged,
-      { main: "./index.js", bin: "./cli/missing.js" },
-      (msg) => warnings.push(String(msg)),
+    await validate(staged, { main: "./index.js", bin: "./cli/missing.js" }, (msg) =>
+      warnings.push(String(msg)),
     );
     assert.ok(
       warnings.some((w) => /cli\/missing\.js/.test(w)),
