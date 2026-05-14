@@ -78,6 +78,20 @@ describe("rewritePackageJson — types", () => {
     assert.equal(out.main, "./src/index.mjs");
     assert.equal(out.types, "./src/index.d.mts");
   });
+
+  // Regression: a hand-authored `types: "./types.d.ts"` (already a
+  // declaration file) was being rewritten to `./types.d.d.ts` because the
+  // `.tsx?$` replacement matched the trailing `.ts` of `.d.ts`. Same for
+  // `.d.mts`. Surfaced by @endo/cache-map in agoric/endo.
+  it("leaves an already-.d.ts types path unchanged", () => {
+    const out = rewritePackageJson({ types: "./types.d.ts" });
+    assert.equal(out.types, "./types.d.ts");
+  });
+
+  it("leaves an already-.d.mts types path unchanged", () => {
+    const out = rewritePackageJson({ types: "./types.d.mts" });
+    assert.equal(out.types, "./types.d.mts");
+  });
 });
 
 describe("rewritePackageJson — bin", () => {
@@ -136,6 +150,26 @@ describe("rewritePackageJson — exports", () => {
         types: "./src/index.d.ts",
         import: "./src/index.js",
         default: "./src/index.js",
+      },
+    });
+  });
+
+  // Regression: same `.d.ts` → `.d.d.ts` bug as the top-level `types`
+  // field, reached through the conditional-exports path. @endo/cache-map
+  // wires its exports as `{ types: "./types.d.ts", default: "./index.js" }`.
+  it("leaves an already-.d.ts conditional types unchanged", () => {
+    const out = rewritePackageJson({
+      exports: {
+        ".": {
+          types: "./types.d.ts",
+          default: "./index.js",
+        },
+      },
+    });
+    assert.deepEqual(out.exports, {
+      ".": {
+        types: "./types.d.ts",
+        default: "./index.js",
       },
     });
   });

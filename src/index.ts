@@ -630,9 +630,13 @@ function rewriteTsToJs(p) {
 }
 
 // `.ts`/`.tsx` → `.d.ts`; `.mts` → `.d.mts`. Matches the declaration files
-// tsc emits from an .mts source.
+// tsc emits from an .mts source. A path that already ends in `.d.ts` or
+// `.d.mts` is returned unchanged — a hand-authored `types: "./types.d.ts"`
+// is a declaration file, not a source to rewrite, and naively running the
+// `.tsx?$` replacement on it would yield `./types.d.d.ts`.
 function rewriteTsToDts(p) {
   if (typeof p !== "string") return p;
+  if (p.endsWith(".d.ts") || p.endsWith(".d.mts")) return p;
   return p.replace(/\.mts$/, ".d.mts").replace(/\.tsx?$/, ".d.ts");
 }
 
