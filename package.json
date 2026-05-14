@@ -27,6 +27,8 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
     "test": "vp test",
     "pack:self": "node ./src/cli.ts .",
     "prepublishOnly": "node -e \"console.error('Do not run npm publish directly on this repo — main points at raw .ts. Run: pnpm pack:self && npm publish ./ts-node-pack-<version>.tgz'); process.exit(1)\""
@@ -37,6 +39,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.19.39",
+    "oxfmt": "*",
     "typescript": "^6.0.2"
   },
   "engines": {
