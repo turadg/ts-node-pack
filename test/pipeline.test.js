@@ -105,6 +105,30 @@ describe("pipeline: mixed-sources fixture", () => {
     const pkg = JSON.parse(await readFile(join(staging, "package.json"), "utf8"));
     assert.equal(pkg.main, "./src/index.js");
   });
+
+  it("rewrites .d.ts.map `sources` to relative paths (no publisher absolute paths)", async () => {
+    // tsc emits sources relative to outDir; with outDir in tmp, the
+    // resulting path traverses up into the publisher's absolute filesystem
+    // (e.g. ../../../../../<user>/<repo>/src/index.ts). We rewrite these
+    // to in-package relative paths so the published tarball doesn't leak
+    // the publisher's directory layout.
+    const map = JSON.parse(
+      await readFile(join(staging, "src/index.d.ts.map"), "utf8"),
+    );
+    assert.ok(Array.isArray(map.sources) && map.sources.length === 1);
+    const src = map.sources[0];
+    assert.ok(
+      !src.includes(".."),
+      `sources should not traverse upward, got: ${src}`,
+    );
+    assert.ok(
+      !src.startsWith("/"),
+      `sources should not be absolute, got: ${src}`,
+    );
+    // Phase 6 strips index.ts → index.js; the map should reference the
+    // post-strip filename so consumers can navigate to the published file.
+    assert.equal(src, "index.js");
+  });
 });
 
 // ── bin pointing at a missing file (agoric portfolio-api) ─────────────────

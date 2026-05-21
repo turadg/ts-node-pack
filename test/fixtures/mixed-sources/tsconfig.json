@@ -6,6 +6,7 @@
     "allowJs": true,
     "checkJs": false,
     "declaration": true,
+    "declarationMap": true,
     "emitDeclarationOnly": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,

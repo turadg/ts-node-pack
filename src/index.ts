@@ -11,7 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import packlist from "npm-packlist";
 import { transformSync } from "amaro";
@@ -191,6 +191,22 @@ export async function tsNodePack(
 
       log("Phase 5: Emitting .d.ts files via tsc...");
       await runTsc(emitConfigPath, packageDir, log);
+
+      // tsc writes `.d.ts.map#sources` as paths relative to outDir. Because
+      // outDir is the tmp stagingDir (typically 5–10 levels away from the
+      // package), the emitted sources look like
+      // `../../../../<absolute-publisher-path>/foo.js` — leaking the
+      // publisher's filesystem into every published tarball. Rewrite them
+      // to be relative within the staging tree, mirroring the layout
+      // consumers will see after install.
+      const normalizedMaps = await normalizeDeclarationMaps(
+        stagingDir,
+        packageDir,
+        log,
+      );
+      if (normalizedMaps > 0) {
+        log(`Normalized sources in ${normalizedMaps} declaration map(s)`);
+      }
     } else {
       log(
         tsconfigPath === null
@@ -665,6 +681,70 @@ async function pack(stagingDir) {
   });
   const tgzName = stdout.trim().split("\n").pop();
   return join(stagingDir, tgzName);
+}
+
+/**
+ * Rewrite `.d.ts.map` / `.d.mts.map` `sources` entries so they point to the
+ * sibling source files as they appear in the published tarball, not the
+ * publisher's absolute filesystem.
+ *
+ * tsc resolves `sources` relative to outDir. With outDir in a tmp staging
+ * dir, that produces long upward traversals into absolute publisher paths.
+ * We compute the path of each source *within* the package and re-anchor it
+ * inside stagingDir, then make it relative to the map file.
+ *
+ * Also swaps `.ts`/`.mts` source extensions to `.js`/`.mjs`, anticipating
+ * the type-strip in Phase 6.
+ *
+ * Returns the number of map files whose `sources` array was changed.
+ */
+async function normalizeDeclarationMaps(
+  stagingDir: string,
+  packageDir: string,
+  log: (msg: string) => void,
+): Promise<number> {
+  const files = await findFiles(
+    stagingDir,
+    (name) => name.endsWith(".d.ts.map") || name.endsWith(".d.mts.map"),
+  );
+  let count = 0;
+  for (const mapPath of files) {
+    const text = await readFile(mapPath, "utf8");
+    let map: { sources?: unknown };
+    try {
+      map = JSON.parse(text);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(map.sources)) continue;
+    const mapDir = dirname(mapPath);
+    let changed = false;
+    const newSources = (map.sources as string[]).map((src) => {
+      if (typeof src !== "string") return src;
+      // tsc-written sources are relative to the map file's directory.
+      const abs = resolve(mapDir, src);
+      const inPkg = relative(packageDir, abs);
+      // Skip anything that doesn't resolve inside the package (e.g.
+      // synthetic <stdin> entries or out-of-tree references).
+      if (inPkg.startsWith("..") || isAbsolute(inPkg)) return src;
+      const stripped =
+        inPkg.endsWith(".ts") && !inPkg.endsWith(".d.ts")
+          ? inPkg.slice(0, -3) + ".js"
+          : inPkg.endsWith(".mts") && !inPkg.endsWith(".d.mts")
+            ? inPkg.slice(0, -4) + ".mjs"
+            : inPkg;
+      const rewritten = relative(mapDir, join(stagingDir, stripped));
+      if (rewritten !== src) changed = true;
+      return rewritten;
+    });
+    if (changed) {
+      map.sources = newSources;
+      await writeFile(mapPath, JSON.stringify(map));
+      count++;
+      log(`  Normalized: ${relative(stagingDir, mapPath)}`);
+    }
+  }
+  return count;
 }
 
 async function findFiles(dir, test) {
