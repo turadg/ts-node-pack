@@ -5,7 +5,7 @@
  */
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { TS_SPECIFIER_PATTERNS } from "./rewrite-specifiers.ts";
 
 export async function validate(stagingDir, pkg, log: (...args: unknown[]) => void = () => {}) {
@@ -54,9 +54,36 @@ export async function validate(stagingDir, pkg, log: (...args: unknown[]) => voi
   // target (see the bin-missing fixture — agoric/portfolio-api ships that
   // way intentionally), so we only warn.
   const { strict: strictRefs, lenient: lenientRefs } = collectReferencedFiles(pkg);
+
+  // Subpath patterns (refs containing "*", e.g. `./tools/*` or
+  // `./dist/codegen/*.js`) are placeholders Node fills in at resolution time,
+  // so existsSync on the literal path can never succeed. Validate them
+  // against the staged file list instead: the prefix-before-`*` plus
+  // suffix-after-`*` must match at least one packed file.
+  const patternRefs = [];
   for (const ref of strictRefs) {
-    if (!existsSync(join(stagingDir, ref))) {
+    if (ref.includes("*")) {
+      patternRefs.push(ref);
+    } else if (!existsSync(join(stagingDir, ref))) {
       errors.push(`referenced file missing from tarball: ${ref}`);
+    }
+  }
+  if (patternRefs.length > 0) {
+    const stagedFiles = (await findFiles(stagingDir, () => true)).map((f) =>
+      relative(stagingDir, f).split(sep).join("/"),
+    );
+    for (const ref of patternRefs) {
+      const prefix = ref.slice(0, ref.indexOf("*"));
+      const suffix = ref.slice(ref.lastIndexOf("*") + 1);
+      const matched = stagedFiles.some(
+        (f) =>
+          f.length >= prefix.length + suffix.length &&
+          f.startsWith(prefix) &&
+          f.endsWith(suffix),
+      );
+      if (!matched) {
+        errors.push(`exports pattern matches no file in tarball: ${ref}`);
+      }
     }
   }
   for (const ref of lenientRefs) {

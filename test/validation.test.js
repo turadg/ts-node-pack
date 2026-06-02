@@ -143,6 +143,44 @@ describe("validate — strict reference checks", () => {
     );
   });
 
+  it("passes a `*` subpath pattern when at least one file matches", async () => {
+    staged = await stage({
+      "index.js": "export {};\n",
+      "tools/greeter.js": "export {};\n",
+      "tools/testers.js": "export {};\n",
+    });
+    await validate(staged, {
+      main: "./index.js",
+      exports: { ".": "./index.js", "./tools/*": "./tools/*" },
+    });
+  });
+
+  it("passes a `*` pattern with a suffix when a matching file exists", async () => {
+    staged = await stage({
+      "dist/codegen/any.d.ts": "export {};\n",
+      "dist/codegen/any.js": "export {};\n",
+    });
+    await validate(staged, {
+      exports: {
+        "./codegen/*.js": {
+          types: "./dist/codegen/*.d.ts",
+          default: "./dist/codegen/*.js",
+        },
+      },
+    });
+  });
+
+  it("throws when a `*` pattern matches no staged file", async () => {
+    staged = await stage({ "index.js": "export {};\n" });
+    await assert.rejects(
+      validate(staged, {
+        main: "./index.js",
+        exports: { ".": "./index.js", "./tools/*": "./tools/*" },
+      }),
+      /exports pattern matches no file in tarball: tools\/\*/,
+    );
+  });
+
   it("passes when every strict reference exists", async () => {
     staged = await stage({
       "index.mjs": "export {};\n",
