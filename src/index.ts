@@ -588,7 +588,29 @@ export function rewritePackageJson(pkg) {
 
   // Remove development-only fields that aren't needed in the published package
   delete result.devDependencies;
-  delete result.scripts;
+
+  // Scrub scripts, but preserve the npm install lifecycle hooks. These run on
+  // the *consumer's* machine when a published tarball is installed as a
+  // dependency, so they're part of the package's public contract (e.g. an
+  // xsnap-style postinstall that fetches a prebuilt native binary). Only
+  // preinstall/install/postinstall run in that flow; build/test/lint and the
+  // prepare/prepack/prepublishOnly family are dev/publish-time scripts that
+  // reference tooling absent from the tarball, so they are dropped. Install
+  // hooks must therefore be self-contained (not `npm run <other-script>`).
+  if (result.scripts) {
+    const INSTALL_HOOKS = ["preinstall", "install", "postinstall"];
+    const kept = {};
+    for (const hook of INSTALL_HOOKS) {
+      if (result.scripts[hook] !== undefined) {
+        kept[hook] = result.scripts[hook];
+      }
+    }
+    if (Object.keys(kept).length > 0) {
+      result.scripts = kept;
+    } else {
+      delete result.scripts;
+    }
+  }
 
   // Rewrite entry points
   const originalMain = result.main;

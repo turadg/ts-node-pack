@@ -246,7 +246,7 @@ describe("rewritePackageJson — files array", () => {
 });
 
 describe("rewritePackageJson — scrubbing", () => {
-  it("strips devDependencies and scripts", () => {
+  it("strips devDependencies and dev scripts", () => {
     const out = rewritePackageJson({
       main: "./src/index.ts",
       devDependencies: { typescript: "^5.7.0" },
@@ -254,6 +254,25 @@ describe("rewritePackageJson — scrubbing", () => {
     });
     assert.equal(out.devDependencies, undefined);
     assert.equal(out.scripts, undefined);
+  });
+
+  it("preserves install lifecycle hooks, dropping other scripts", () => {
+    const out = rewritePackageJson({
+      main: "./src/index.ts",
+      scripts: {
+        preinstall: "node ./preinstall.js",
+        install: "node-gyp rebuild",
+        postinstall: "node ./install-prebuilt.js",
+        build: "tsc",
+        test: "ava",
+        prepare: "tsc",
+      },
+    });
+    assert.deepEqual(out.scripts, {
+      preinstall: "node ./preinstall.js",
+      install: "node-gyp rebuild",
+      postinstall: "node ./install-prebuilt.js",
+    });
   });
 
   it("does not mutate the input", () => {
