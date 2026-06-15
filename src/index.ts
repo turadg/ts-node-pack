@@ -17,6 +17,7 @@ import packlist from "npm-packlist";
 import { transformSync } from "amaro";
 import { rewriteTsSpecifiers } from "./rewrite-specifiers.ts";
 import { validate } from "./validation.ts";
+import { loadCatalogs, resolveCatalogSpec } from "./catalogs.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -199,11 +200,7 @@ export async function tsNodePack(
       // publisher's filesystem into every published tarball. Rewrite them
       // to be relative within the staging tree, mirroring the layout
       // consumers will see after install.
-      const normalizedMaps = await normalizeDeclarationMaps(
-        stagingDir,
-        packageDir,
-        log,
-      );
+      const normalizedMaps = await normalizeDeclarationMaps(stagingDir, packageDir, log);
       if (normalizedMaps > 0) {
         log(`Normalized sources in ${normalizedMaps} declaration map(s)`);
       }
@@ -236,7 +233,8 @@ export async function tsNodePack(
     // packages to publish), then flip entry paths and strip dev-only
     // fields.
     log("Phase 7: Rewriting package.json...");
-    const resolvedPkg = await resolveWorkspaceDependencies(pkgJson, packageDir, log);
+    const workspaceResolvedPkg = await resolveWorkspaceDependencies(pkgJson, packageDir, log);
+    const resolvedPkg = await resolveCatalogDependencies(workspaceResolvedPkg, packageDir, log);
     const rewrittenPkg = rewritePackageJson(resolvedPkg);
     await writeFile(join(stagingDir, "package.json"), JSON.stringify(rewrittenPkg, null, 2) + "\n");
 
@@ -480,6 +478,62 @@ function hasWorkspaceDeps(pkg) {
     if (!deps || typeof deps !== "object") continue;
     for (const spec of Object.values(deps)) {
       if (typeof spec === "string" && spec.startsWith("workspace:")) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Resolve `catalog:` protocol specifiers in the package's dependency
+ * fields to the concrete ranges declared in the workspace catalog config
+ * (`.yarnrc.yml` for Yarn berry, `pnpm-workspace.yaml` for pnpm).
+ *
+ *   catalog:        → the range from the default (unnamed) catalog
+ *   catalog:<name>  → the range from the named catalog <name>
+ *
+ * Only the publishing package manager understands `catalog:`; npm does
+ * not. So, exactly like `workspace:`, an unresolved `catalog:` spec in a
+ * published tarball is unusable by consumers installing from the registry.
+ * See https://github.com/endojs/endo/issues/3304.
+ *
+ * Throws if the package has `catalog:` specifiers but no catalog config can
+ * be found in any ancestor, or if a spec references an undefined catalog or
+ * a dependency the catalog doesn't list — broken-workspace failure modes
+ * that should surface loudly rather than ship an unpublishable tarball.
+ */
+export async function resolveCatalogDependencies(pkg, packageDir, log) {
+  if (!hasCatalogDeps(pkg)) return pkg;
+
+  const loaded = await loadCatalogs(packageDir);
+  if (!loaded) {
+    throw new Error(
+      `${pkg.name || "package"}: found 'catalog:' dependencies but no ancestor workspace config (.yarnrc.yml / pnpm-workspace.yaml) defines a catalog`,
+    );
+  }
+  log(`Resolving catalog: deps against ${loaded.source}`);
+
+  const result = { ...pkg };
+  for (const field of DEP_FIELDS_WITH_WORKSPACE) {
+    const deps = result[field];
+    if (!deps || typeof deps !== "object") continue;
+    const updated = { ...deps };
+    for (const [name, spec] of Object.entries(updated)) {
+      if (typeof spec !== "string" || !spec.startsWith("catalog:")) continue;
+      const resolved = resolveCatalogSpec(spec, name, loaded.catalogs);
+      updated[name] = resolved;
+      log(`  ${field}["${name}"]: ${spec} → ${resolved}`);
+    }
+    result[field] = updated;
+  }
+  return result;
+}
+
+function hasCatalogDeps(pkg) {
+  for (const field of DEP_FIELDS_WITH_WORKSPACE) {
+    const deps = pkg[field];
+    if (!deps || typeof deps !== "object") continue;
+    for (const spec of Object.values(deps)) {
+      if (typeof spec === "string" && spec.startsWith("catalog:")) return true;
     }
   }
   return false;

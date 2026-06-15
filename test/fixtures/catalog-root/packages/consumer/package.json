@@ -1,0 +1,23 @@
+{
+  "name": "@regress/catalog-consumer",
+  "version": "1.0.0",
+  "files": [
+    "src"
+  ],
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "eslint-plugin-import": "catalog:dev",
+    "lodash": "catalog:",
+    "typescript": "catalog:dev"
+  },
+  "devDependencies": {
+    "typescript": "catalog:dev"
+  },
+  "peerDependencies": {
+    "typescript": "catalog:dev"
+  },
+  "optionalDependencies": {
+    "lodash": "catalog:"
+  }
+}

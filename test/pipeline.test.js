@@ -112,19 +112,11 @@ describe("pipeline: mixed-sources fixture", () => {
     // (e.g. ../../../../../<user>/<repo>/src/index.ts). We rewrite these
     // to in-package relative paths so the published tarball doesn't leak
     // the publisher's directory layout.
-    const map = JSON.parse(
-      await readFile(join(staging, "src/index.d.ts.map"), "utf8"),
-    );
+    const map = JSON.parse(await readFile(join(staging, "src/index.d.ts.map"), "utf8"));
     assert.ok(Array.isArray(map.sources) && map.sources.length === 1);
     const src = map.sources[0];
-    assert.ok(
-      !src.includes(".."),
-      `sources should not traverse upward, got: ${src}`,
-    );
-    assert.ok(
-      !src.startsWith("/"),
-      `sources should not be absolute, got: ${src}`,
-    );
+    assert.ok(!src.includes(".."), `sources should not traverse upward, got: ${src}`);
+    assert.ok(!src.startsWith("/"), `sources should not be absolute, got: ${src}`);
     // Phase 6 strips index.ts → index.js; the map should reference the
     // post-strip filename so consumers can navigate to the published file.
     assert.equal(src, "index.js");
@@ -175,6 +167,58 @@ describe("pipeline: workspace-root/packages/consumer fixture", () => {
 
   it("resolves `workspace:~` to ~<version>", () => {
     assert.equal(packageJson.optionalDependencies["@regress/provider"], "~3.4.5");
+  });
+});
+
+// ── catalog: protocol resolution (endojs/endo#3304) ───────────────────────
+
+describe("pipeline: catalog-root/packages/consumer fixture", () => {
+  // Regression for https://github.com/endojs/endo/issues/3304. The
+  // consumer depends on catalog entries via `catalog:` (default catalog)
+  // and `catalog:dev` (named catalog) across dependencies,
+  // peerDependencies, and optionalDependencies. Each must resolve to the
+  // concrete range from the workspace's `.yarnrc.yml` at pack time; leaving
+  // the literal `catalog:` string in place ships a tarball that npm cannot
+  // install (which is what happened to @endo/eslint-plugin 2.6.0).
+  let packageJson;
+
+  beforeAll(async () => {
+    const staging = await packFixture("catalog-root/packages/consumer");
+    packageJson = JSON.parse(await readFile(join(staging, "package.json"), "utf8"));
+  }, 60_000);
+
+  it("resolves a named-catalog `catalog:dev` spec to the concrete range", () => {
+    assert.equal(packageJson.dependencies.typescript, "~6.0.3");
+  });
+
+  it("resolves a default-catalog `catalog:` spec to the concrete range", () => {
+    assert.equal(packageJson.dependencies.lodash, "^4.17.21");
+  });
+
+  it("preserves an `npm:` alias entry from the catalog verbatim", () => {
+    assert.equal(
+      packageJson.dependencies["eslint-plugin-import"],
+      "npm:eslint-plugin-import-x@4.16.2",
+    );
+  });
+
+  it("resolves `catalog:` in peerDependencies", () => {
+    assert.equal(packageJson.peerDependencies.typescript, "~6.0.3");
+  });
+
+  it("resolves `catalog:` in optionalDependencies", () => {
+    assert.equal(packageJson.optionalDependencies.lodash, "^4.17.21");
+  });
+
+  it("leaves no unresolved catalog: spec anywhere in the published manifest", () => {
+    for (const field of ["dependencies", "peerDependencies", "optionalDependencies"]) {
+      for (const [name, spec] of Object.entries(packageJson[field] ?? {})) {
+        assert.ok(
+          !String(spec).startsWith("catalog:"),
+          `${field}.${name} still has an unresolved catalog: spec: ${spec}`,
+        );
+      }
+    }
   });
 });
 

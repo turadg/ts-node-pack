@@ -34,8 +34,11 @@
     "prepublishOnly": "node -e \"console.error('Do not run npm publish directly on this repo — main points at raw .ts. Run: pnpm pack:self && npm publish ./ts-node-pack-<version>.tgz'); process.exit(1)\""
   },
   "dependencies": {
+    "@pnpm/catalogs.config": "^1100.0.0",
+    "@pnpm/catalogs.resolver": "^1100.0.0",
     "amaro": "^0.3.2",
-    "npm-packlist": "^10.0.4"
+    "npm-packlist": "^10.0.4",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@types/node": "^20.19.39",
